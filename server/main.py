@@ -32,7 +32,11 @@ def fail(msg: str) -> None:
 
 
 domain = os.environ.get("DOMAIN", "").strip()
-public_url = (os.environ.get("PUBLIC_URL") or (f"https://{domain}" if domain else "")).rstrip("/")
+https_port = os.environ.get("HTTPS_PORT", "").strip()
+public_url = os.environ.get("PUBLIC_URL", "").strip()
+if not public_url and domain:
+    public_url = f"https://{domain}" if https_port in ("", "443") else f"https://{domain}:{https_port}"
+public_url = public_url.rstrip("/")
 admin_password = os.environ.get("ADMIN_PASSWORD", "")
 api_token = os.environ.get("API_TOKEN", "").strip()
 workdir = Path(os.environ.get("WORKDIR", "/workspace"))

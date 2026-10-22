@@ -17,16 +17,17 @@ services:
       - "127.0.0.1:${MCP_LOCAL_PORT:-8000}:8000"
 
   # Встроенный HTTPS. Запускается, только если в .env есть COMPOSE_PROFILES=caddy.
-  # Нужны свободные порты 80 и 443.
+  # Нужен свободный порт 80 и порт HTTPS_PORT (по умолчанию 443).
   caddy:
     image: caddy:2
     profiles: ["caddy"]
     restart: unless-stopped
     ports:
       - "80:80"
-      - "443:443"
+      - "${HTTPS_PORT:-443}:${HTTPS_PORT:-443}"
     environment:
       DOMAIN: ${DOMAIN}
+      HTTPS_PORT: ${HTTPS_PORT:-443}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

@@ -1,4 +1,15 @@
 # Caddy сам получает и продлевает HTTPS-сертификат Let's Encrypt для домена.
+# Сертификат выдаётся через порт 80, поэтому HTTPS может работать и на другом порту
+# (HTTPS_PORT в .env), если 443 занят — например, VPN.
+{
+	https_port {$HTTPS_PORT:443}
+}
+
 {$DOMAIN} {
+	tls {
+		issuer acme {
+			disable_tlsalpn_challenge
+		}
+	}
 	reverse_proxy mcp:8000
 }

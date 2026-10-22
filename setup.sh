@@ -32,12 +32,17 @@ port_busy() {
     fi
 }
 
-# Кто держит порт: docker:<контейнер>, имя веб-сервера или unknown.
+# Кто держит порт: docker:<контейнер>, имя процесса (ss видит его под root), веб-сервер или unknown.
 port_holder() {
     local c p
     c=$(docker ps --filter "publish=$1" --format '{{.Names}}' 2>/dev/null | head -1 || true)
     if [[ -n "$c" ]]; then
         echo "docker:$c"
+        return
+    fi
+    p=$(ss -ltnpH "sport = :$1" 2>/dev/null | grep -o 'users:(("[^"]*"' | head -1 | cut -d'"' -f2 || true)
+    if [[ -n "$p" ]]; then
+        echo "$p"
         return
     fi
     for p in nginx apache2 httpd caddy traefik haproxy lighttpd; do
@@ -86,31 +91,46 @@ while port_busy "$LOCAL_PORT"; do
 done
 env_set MCP_LOCAL_PORT "$LOCAL_PORT"
 
-BUSY=""
-port_busy 80 && BUSY="80"
-port_busy 443 && BUSY="${BUSY:+$BUSY и }443"
-
-if [[ -z "$BUSY" ]]; then
+# Порт 80 свободен — Caddy получает сертификат через него. HTTPS на 443, а если 443 занят
+# (например, VPN) — на свободном порту от 8443.
+if ! port_busy 80; then
     env_set COMPOSE_PROFILES caddy
+    if ! port_busy 443; then
+        HTTPS_PORT=443
+        URL="https://$DOMAIN/mcp"
+        NOTE="Порты 80 и 443 свободны — HTTPS сделает встроенный Caddy."
+    else
+        HTTPS_PORT=$(env_get HTTPS_PORT)
+        [[ "$HTTPS_PORT" =~ ^[0-9]+$ && "$HTTPS_PORT" != 443 ]] || HTTPS_PORT=8443
+        while port_busy "$HTTPS_PORT"; do
+            HTTPS_PORT=$((HTTPS_PORT + 1))
+        done
+        URL="https://$DOMAIN:$HTTPS_PORT/mcp"
+        NOTE="Порт 443 занят ($(port_holder 443)), поэтому HTTPS будет на порту $HTTPS_PORT.
+Сертификат Caddy получит через порт 80 — он должен оставаться свободным.
+Если у хостинга есть файрвол, откройте в нём порты 80 и $HTTPS_PORT."
+    fi
+    env_set HTTPS_PORT "$HTTPS_PORT"
     cat <<EOF
 
-Порты 80 и 443 свободны — HTTPS сделает встроенный Caddy.
+$NOTE
 
   Запуск:          docker compose up -d --build
-  URL коннектора:  https://$DOMAIN/mcp
+  URL коннектора:  $URL
   Пароль и токен:  cat .env
 EOF
     exit 0
 fi
 
+# Порт 80 занят — HTTPS делает веб-сервер, который его держит.
 env_set COMPOSE_PROFILES ""
+env_set HTTPS_PORT 443
 sed -e "s/__DOMAIN__/$DOMAIN/g" -e "s/__PORT__/$LOCAL_PORT/g" nginx-site.conf.template > nginx-site.conf
 HOLDER=$(port_holder 80)
-[[ "$HOLDER" == unknown ]] && HOLDER=$(port_holder 443)
 
 cat <<EOF
 
-Порт $BUSY уже занят ($HOLDER), поэтому встроенный Caddy выключен.
+Порт 80 занят ($HOLDER), поэтому встроенный Caddy выключен.
 MCP-сервер будет слушать только локально: http://127.0.0.1:$LOCAL_PORT
 
 Сначала запустите контейнер:  docker compose up -d --build
@@ -155,15 +175,17 @@ EOF
         cat <<EOF
 Порт занят Docker-контейнером «${HOLDER#docker:}».
 Если он не нужен:  docker stop ${HOLDER#docker:} && ./setup.sh
+(тогда HTTPS сделает встроенный Caddy).
 Если это ваш прокси для других сайтов — направьте в нём домен $DOMAIN
 на 127.0.0.1:$LOCAL_PORT (пример для nginx — в файле nginx-site.conf).
 EOF
         ;;
     *)
+        [[ "$HOLDER" == unknown ]] && echo "Узнать, какая программа занимает порт:  sudo ss -ltnp 'sport = :80'"
         cat <<EOF
-Узнать, какая программа занимает порт:  sudo ss -ltnp 'sport = :80'
-Если она не нужна — остановите её и запустите ./setup.sh ещё раз.
-Если это ваш веб-сервер — направьте домен $DOMAIN на 127.0.0.1:$LOCAL_PORT
+Если эта программа не нужна на порту 80 — остановите её (или переведите на другой порт)
+и запустите ./setup.sh ещё раз: тогда HTTPS сделает встроенный Caddy.
+Если это ваш веб-сервер — направьте в нём домен $DOMAIN на 127.0.0.1:$LOCAL_PORT
 (готовый пример для nginx: nginx-site.conf, остальное — в README).
 EOF
         ;;
