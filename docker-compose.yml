@@ -12,11 +12,15 @@ services:
       # - /var/www:/host/var/www
       # - /:/host                # ВЕСЬ диск сервера. Claude сможет менять любые файлы.
       # - /var/run/docker.sock:/var/run/docker.sock   # управление Docker. Это равно root-доступу к серверу.
-    expose:
-      - "8000"
+    ports:
+      # Только для самого сервера (127.0.0.1): сюда проксирует nginx/apache, если порты 80/443 заняты.
+      - "127.0.0.1:${MCP_LOCAL_PORT:-8000}:8000"
 
+  # Встроенный HTTPS. Запускается, только если в .env есть COMPOSE_PROFILES=caddy.
+  # Нужны свободные порты 80 и 443.
   caddy:
     image: caddy:2
+    profiles: ["caddy"]
     restart: unless-stopped
     ports:
       - "80:80"

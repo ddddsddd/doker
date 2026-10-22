@@ -179,7 +179,11 @@ def main() -> None:
         host="0.0.0.0",
         port=port,
         proxy_headers=True,
-        forwarded_allow_ips=os.environ.get("FORWARDED_ALLOW_IPS", "*"),
+        # Only proxies on loopback/private networks (Caddy, host nginx via Docker) may set
+        # X-Forwarded-For; uvicorn then takes the rightmost untrusted address as the client.
+        forwarded_allow_ips=os.environ.get(
+            "FORWARDED_ALLOW_IPS", "127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
+        ),
         log_level="info",
     )
 

@@ -1,4 +1,5 @@
 .env
 workspace/
 data/
+nginx-site.conf
 __pycache__/

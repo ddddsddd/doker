@@ -20,20 +20,24 @@ Docker-контейнер, через который Claude (claude.ai, прил
 - Linux-сервер с Docker и Docker Compose (`docker compose version` должен работать).
 - Домен (или поддомен), A-запись которого указывает на IP сервера. Нет домена — подойдёт бесплатный
   поддомен, например на [duckdns.org](https://www.duckdns.org).
-- Открытые порты 80 и 443: по ним Caddy автоматически получит HTTPS-сертификат.
-  claude.ai подключается только по HTTPS.
+- HTTPS — claude.ai подключается только по нему. Если порты 80 и 443 свободны, сертификат автоматически
+  получит встроенный Caddy. Если их уже занимает nginx/apache, `setup.sh` это заметит и подготовит
+  настройку через ваш веб-сервер (см. [Порты 80/443 заняты](#порты-80443-заняты)).
 
 ## Установка
 
 ```bash
 git clone https://github.com/ddddsddd/doker.git
 cd doker
-./setup.sh                    # спросит домен, сгенерирует пароль и токен в .env
+./setup.sh                    # спросит домен, создаст пароль и токен, проверит порты 80/443
 docker compose up -d --build
 ```
 
-Проверка: `curl https://ВАШ_ДОМЕН/health` должен ответить `ok`.
-Пароль и токен потом можно посмотреть командой `cat .env`.
+Если `setup.sh` сообщил, что порты заняты, выполните шаги, которые он вывел (они же описаны ниже
+в разделе «Порты 80/443 заняты»).
+
+Проверка: `curl http://127.0.0.1:8000/health` на самом сервере и `curl https://ВАШ_ДОМЕН/health`
+снаружи должны ответить `ok`. Пароль и токен потом можно посмотреть командой `cat .env`.
 
 ## Подключение к claude.ai
 
@@ -105,22 +109,64 @@ git pull && docker compose up -d --build   # обновление
 docker compose down                 # остановка
 ```
 
-## Если на сервере уже есть nginx (порты 80/443 заняты)
+## Порты 80/443 заняты
 
-Удалите сервис `caddy` из `docker-compose.yml`, а у сервиса `mcp` замените `expose` на
-`ports: ["127.0.0.1:8000:8000"]`. В nginx добавьте сайт с HTTPS (например, через certbot):
+Ошибка `failed to bind host port 0.0.0.0:80/tcp: address already in use` при запуске означает, что
+порт уже занят другой программой — обычно nginx или apache. Запустите ещё раз:
 
-```nginx
-location / {
-    proxy_pass http://127.0.0.1:8000;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_buffering off;
-    proxy_read_timeout 3600s;
-}
+```bash
+docker compose down
+git pull
+./setup.sh
 ```
+
+Скрипт сохранит пароль и токен, определит, кто занимает порт, выключит встроенный Caddy
+(`COMPOSE_PROFILES=` в `.env`) и напишет, что делать дальше. MCP-сервер в этом режиме доступен только
+с самого сервера, на `127.0.0.1:8000` (номер порта — `MCP_LOCAL_PORT` в `.env`), а HTTPS делает
+ваш веб-сервер.
+
+Узнать вручную, кто занимает порт: `sudo ss -ltnp 'sport = :80'`. Если это стандартный nginx/apache,
+на котором нет ваших сайтов, проще всего его выключить (`sudo systemctl disable --now nginx`)
+и снова запустить `./setup.sh` — тогда HTTPS сделает встроенный Caddy.
+
+### nginx
+
+`setup.sh` создаёт готовый `nginx-site.conf` с вашим доменом (шаблон — `nginx-site.conf.template`):
+
+```bash
+docker compose up -d --build
+sudo cp nginx-site.conf /etc/nginx/sites-available/claude-mcp.conf
+sudo ln -sf /etc/nginx/sites-available/claude-mcp.conf /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+sudo apt install -y certbot python3-certbot-nginx   # если certbot ещё нет
+sudo certbot --nginx -d ВАШ_ДОМЕН
+```
+
+Если nginx у вас с каталогом `conf.d` вместо `sites-available`, скопируйте файл в
+`/etc/nginx/conf.d/claude-mcp.conf`.
+
+### Apache
+
+```bash
+sudo a2enmod proxy proxy_http headers
+sudo tee /etc/apache2/sites-available/claude-mcp.conf > /dev/null <<'EOF'
+<VirtualHost *:80>
+    ServerName ВАШ_ДОМЕН
+    ProxyPreserveHost On
+    RequestHeader unset X-Forwarded-For
+    ProxyPass / http://127.0.0.1:8000/ flushpackets=on timeout=3600
+    ProxyPassReverse / http://127.0.0.1:8000/
+</VirtualHost>
+EOF
+sudo a2ensite claude-mcp && sudo systemctl reload apache2
+sudo apt install -y certbot python3-certbot-apache
+sudo certbot --apache -d ВАШ_ДОМЕН
+```
+
+### Caddy, установленный на сервере
+
+Добавьте в его Caddyfile блок `ВАШ_ДОМЕН { reverse_proxy 127.0.0.1:8000 }` и выполните
+`sudo systemctl reload caddy`.
 
 ## Настройки `.env`
 
@@ -129,6 +175,8 @@ location / {
 | `DOMAIN` | — | домен сервера (обязательно) |
 | `ADMIN_PASSWORD` | — | пароль для подключения коннектора, от 12 символов (обязательно) |
 | `API_TOKEN` | пусто | токен для Claude Code и других клиентов, от 32 символов |
+| `COMPOSE_PROFILES` | — | `caddy` — встроенный HTTPS; пусто — HTTPS делает ваш nginx/apache |
+| `MCP_LOCAL_PORT` | `8000` | порт на `127.0.0.1`, куда проксирует ваш веб-сервер |
 | `COMMAND_TIMEOUT` | `120` | таймаут команды по умолчанию, секунд |
 | `MAX_COMMAND_TIMEOUT` | `1800` | максимальный таймаут, который может запросить Claude |
 | `PUBLIC_URL` | `https://$DOMAIN` | внешний адрес, если он отличается от домена |
