@@ -1,0 +1,4 @@
+# Caddy сам получает и продлевает HTTPS-сертификат Let's Encrypt для домена.
+{$DOMAIN} {
+	reverse_proxy mcp:8000
+}

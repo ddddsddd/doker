@@ -1,0 +1,35 @@
+services:
+  mcp:
+    build: .
+    container_name: claude-server-mcp
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./workspace:/workspace   # рабочая папка Claude
+      - ./data:/data             # токены подключений и журнал действий (logs/audit.log)
+      # Доступ к папкам самого сервера (хоста) — раскомментируйте только то, что нужно:
+      # - /home:/host/home
+      # - /var/www:/host/var/www
+      # - /:/host                # ВЕСЬ диск сервера. Claude сможет менять любые файлы.
+      # - /var/run/docker.sock:/var/run/docker.sock   # управление Docker. Это равно root-доступу к серверу.
+    expose:
+      - "8000"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - mcp
+
+volumes:
+  caddy_data:
+  caddy_config:
