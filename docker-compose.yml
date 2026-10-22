@@ -16,24 +16,39 @@ services:
       # Только для самого сервера (127.0.0.1): сюда проксирует nginx/apache, если порты 80/443 заняты.
       - "127.0.0.1:${MCP_LOCAL_PORT:-8000}:8000"
 
-  # Встроенный HTTPS. Запускается, только если в .env есть COMPOSE_PROFILES=caddy.
-  # Нужен свободный порт 80 и порт HTTPS_PORT (по умолчанию 443).
+  # Встроенный HTTPS. Запускается, только если в COMPOSE_PROFILES (.env) есть caddy.
+  # Нужен свободный порт 80; порт 443 — свой или общий с VPN через sni (настраивает setup.sh).
   caddy:
     image: caddy:2
     profiles: ["caddy"]
     restart: unless-stopped
     ports:
       - "80:80"
-      - "${HTTPS_PORT:-443}:${HTTPS_PORT:-443}"
+      - "${CADDY_HTTPS_PUBLISH:-443:443}"
     environment:
       DOMAIN: ${DOMAIN}
-      HTTPS_PORT: ${HTTPS_PORT:-443}
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./${CADDYFILE:-Caddyfile}:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
       - mcp
+
+  # Режим «общий 443» (COMPOSE_PROFILES=caddy,sni): порт 443 делится между Claude и VPN по имени домена.
+  sni:
+    image: haproxy:3.0-alpine
+    profiles: ["sni"]
+    restart: unless-stopped
+    network_mode: host
+    user: root
+    environment:
+      DOMAIN: ${DOMAIN}
+      CADDY_LOCAL_PORT: ${CADDY_LOCAL_PORT:-8443}
+      VPN_PORT: ${VPN_PORT:-4443}
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - caddy
 
 volumes:
   caddy_data:

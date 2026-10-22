@@ -1,0 +1,22 @@
+# Caddy для режима «общий 443»: HTTPS слушает внутри на 8443, снаружи к нему приходит HAProxy с 443.
+# Сертификат Let's Encrypt выдаётся через порт 80.
+{
+	https_port 8443
+	servers :8443 {
+		listener_wrappers {
+			proxy_protocol {
+				allow 127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+			}
+			tls
+		}
+	}
+}
+
+{$DOMAIN} {
+	tls {
+		issuer acme {
+			disable_tlsalpn_challenge
+		}
+	}
+	reverse_proxy mcp:8000
+}
